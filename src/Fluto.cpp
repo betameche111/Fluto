@@ -163,6 +163,7 @@ void setup()
   calibrate();
 
   memset(queue, 0, sizeof(queue));
+  wm.setConfigPortalBlocking(false);
   wm.setConnectRetries(5);
   if (wm.autoConnect("La flute enchantée"))
   {
@@ -350,6 +351,7 @@ void play_success()
 
 void loop()
 {
+  wm.process();
   if (digitalRead(pinButtonDown) == LOW)
   {
     menu.process(DOWN);
