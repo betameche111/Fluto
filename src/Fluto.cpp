@@ -8,6 +8,7 @@
 #include <renderer/CharacterDisplayRenderer.h>
 #include <Arduino.h>
 #include <WiFiManager.h>
+#include <ESPAsyncWebServer.h>
 
 #define pinEnable 14 // Activation du driver/pilote
 #define pinStep 33   // Signal de PAS (avancement)
@@ -52,7 +53,10 @@
 
 #define FULL_RANGE 5346
 
-// tada
+#define QUEUE_SIZE 3
+
+AsyncWebServer server(80);
+
 Servo esc;
 Servo servo;
 
@@ -63,11 +67,16 @@ void play_star_wars();
 void play_imperial_march();
 void play_au_clair_de_la_lune();
 void calibrate();
+void play_success();
+
+void write_to_queue(void (*func_addr)());
+void play_from_queue();
 
 // Ecran LCD
 
 MENU_SCREEN(mainScreen, mainItems,
-            ITEM_COMMAND("Loose", play_loose),
+            ITEM_COMMAND("Success", play_success),
+            ITEM_COMMAND("Loooooooose", play_loose),
             ITEM_COMMAND("SNCF", play_sncf),
             ITEM_COMMAND("Jurassik park", play_jurassik),
             ITEM_COMMAND("Star Wars", play_star_wars),
@@ -82,6 +91,32 @@ LcdMenu menu(renderer);
 WiFiManager wm;
 
 AccelStepper stepper(AccelStepper::DRIVER, pinStep, pinDir);
+
+void (*queue[QUEUE_SIZE])();
+uint8_t w_index = 0;
+uint8_t r_index = 0;
+
+void prepare_web_server()
+{
+  server.on("/api/success", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    // play_success();
+    write_to_queue(&play_success); });
+
+  server.on("/api/fail", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    write_to_queue(&play_loose); });
+
+  server.on("/api/calibrate", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    write_to_queue(&calibrate); });
+
+  server.begin();
+  Serial.println("Serveur web configured !!");
+}
 
 void setup()
 {
@@ -127,8 +162,43 @@ void setup()
   // Calibration
   calibrate();
 
-  wm.setConfigPortalBlocking(false);
-  wm.autoConnect("La flute enchantée");
+  memset(queue, 0, sizeof(queue));
+  wm.setConnectRetries(5);
+  if (wm.autoConnect("La flute enchantée"))
+  {
+    prepare_web_server();
+    Serial.println("WiFi connected successfully. Local ip is : ");
+    Serial.println(WiFi.localIP());
+  }
+  else
+  {
+    Serial.println("Configportal running");
+  }
+}
+
+void write_to_queue(void (*func_addr)())
+{
+  // Storing function address to play
+  queue[w_index] = func_addr;
+  // Increasing writing index
+  w_index = (w_index + 1) % QUEUE_SIZE;
+}
+
+void play_from_queue()
+{
+  if (queue[r_index] != NULL)
+  {
+    // Calling function address stored in queue
+    queue[r_index]();
+    // Setting back to NULL once played
+    queue[r_index] = NULL;
+    // Increasing reading index
+    r_index = (r_index + 1) % QUEUE_SIZE;
+  }
+  else
+  {
+    /* Nothing to do */
+  }
 }
 
 void calibrate()
@@ -191,7 +261,7 @@ void play_au_clair_de_la_lune()
   play_note(MI5, 300, false);
   play_note(RE5, 300, true);
   play_note(RE5, 300, false);
-  play_note(DO5, 600, true);
+  play_note(DO5, 600, false);
   stop_song();
 }
 
@@ -232,7 +302,7 @@ void play_jurassik()
   play_note(MI5, 400, false);
   play_note(FA5, 600, true);
   play_note(DO5, 600, true);
-  play_note(LA4D, 1000, true);
+  play_note(LA4D, 1000, false);
   stop_song();
 }
 
@@ -247,7 +317,7 @@ void play_star_wars()
   play_note(FA5, 300, false);
   play_note(SOL5, 300, false);
   play_note(FA5, 1200, true);
-  play_note(LA4, 1000, true);
+  play_note(LA4, 1000, false);
   stop_song();
 }
 
@@ -262,14 +332,24 @@ void play_imperial_march()
   play_note(RE5, 700, true);
   play_note(LA4D, 600, true);
   play_note(FA5, 200, true);
-  play_note(RE5, 700, true);
+  play_note(RE5, 700, false);
+  stop_song();
+}
 
+void play_success()
+{
+  start_song();
+  play_note(LA4, 150, false);
+  play_note(DO5D, 100, true);
+  play_note(MI5, 100, true);
+  play_note(LA5, 400, true);
+  play_note(MI5, 100, false);
+  play_note(LA5, 400, false);
   stop_song();
 }
 
 void loop()
 {
-  wm.process();
   if (digitalRead(pinButtonDown) == LOW)
   {
     menu.process(DOWN);
@@ -285,4 +365,7 @@ void loop()
     menu.process(ENTER);
     delay(100);
   }
+
+  // Reading from queue and playing music
+  play_from_queue();
 }
